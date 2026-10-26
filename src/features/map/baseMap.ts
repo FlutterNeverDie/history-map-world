@@ -1,31 +1,18 @@
-import { geoGraticule10, geoMercator } from "d3-geo";
+import { geoGraticule10 } from "d3-geo";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import world from "world-atlas/land-110m.json";
 import { loadDetailedLand as loadShared } from "@/components/map/detailedLand";
 
-/** 평면(메르카토르) 지도. 가로 = 경도 360° 전체, 세로 = 위도 82°N ~ 58°S (그린란드 북단 ~ 남미 남단) */
-export const MAP_WIDTH = 1000;
-const MAX_LAT = 82;
-const MIN_LAT = -58;
-const SCALE = MAP_WIDTH / (2 * Math.PI);
-const mercatorY = (lat: number) =>
-  Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-export const MAP_HEIGHT = Math.round(
-  SCALE * (mercatorY(MAX_LAT) - mercatorY(MIN_LAT)),
-);
-
-/** centerLon 경도가 화면 가운데 오도록 회전한 투영 */
-export function makeProjection(centerLon: number) {
-  return geoMercator()
-    .rotate([-centerLon, 0])
-    .scale(SCALE)
-    .translate([MAP_WIDTH / 2, SCALE * mercatorY(MAX_LAT)])
-    .clipExtent([
-      [0, 0],
-      [MAP_WIDTH, MAP_HEIGHT],
-    ]);
-}
+/** 평면(메르카토르) 지도 - 공용 투영(components/map/projection)과 같은 값: 위도 85°N ~ 85°S(MAP_TOP ~ MAP_BOTTOM),
+ * 좌표 원점과 배율 기준 높이 MAP_HEIGHT는 예전 범위 82°N ~ 58°S 그대로 */
+export {
+  MAP_WIDTH,
+  MAP_HEIGHT,
+  MAP_TOP,
+  MAP_BOTTOM,
+  makeProjection,
+} from "@/components/map/projection";
 
 /** 경도를 -180 ~ 180으로 */
 export function normalizeLon(lon: number): number {
@@ -39,5 +26,4 @@ const topology = world as unknown as Topology<{ land: GeometryCollection }>;
 export const land = feature(topology, topology.objects.land);
 
 /** 확대했을 때 쓰는 자세한 해안선(50m) - 공용(components/map)을 같이 써서 한 번만 받는다 */
-export const loadDetailedLand = () =>
-  loadShared() as Promise<typeof land>;
+export const loadDetailedLand = () => loadShared() as Promise<typeof land>;

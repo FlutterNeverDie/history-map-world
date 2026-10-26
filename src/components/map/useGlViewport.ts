@@ -7,7 +7,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { MAP_HEIGHT, MAP_WIDTH, normalizeLon, yOfLat } from "./useMapViewport";
+import {
+  MAP_BOTTOM,
+  MAP_HEIGHT,
+  MAP_TOP,
+  MAP_WIDTH,
+  normalizeLon,
+  yOfLat,
+} from "./useMapViewport";
 import { mapCover, useMapCover, type MapCover } from "./mapCover";
 import { tiltTransform, untilt } from "./tilt";
 import { swallowNextClick } from "./ghostClick";
@@ -156,8 +163,8 @@ export function useGlViewport(
       size && frame ? (MAP_HEIGHT * size.h) / (k * frame.h) : MAP_HEIGHT / k;
     const w = size ? (h * size.w) / size.h : MAP_WIDTH / k;
     const unit = size ? h / size.h : 0;
-    const lo = -cover.top * unit;
-    const hi = MAP_HEIGHT - h + cover.bottom * unit;
+    const lo = MAP_TOP - cover.top * unit;
+    const hi = MAP_BOTTOM - h + cover.bottom * unit;
     const y = hi < lo ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, cy - h / 2));
     return { x: (MAP_WIDTH - w) / 2, y, w, h };
   }, []);
@@ -532,9 +539,8 @@ export function useGlViewport(
       frame,
       heading: headingRef.current,
       tilt: tiltTransform(t, frame.h),
-      // 먼 쪽은 하늘로 흐리게(본 지도 mask와 같은 높이)
-      fade: t ? ((4 + t / 4) / 100) * frame.h : 0,
-      clipToPlane: !!t,
+      // 기울이면 판 밖 먼 쪽도 화면 끝까지 지도로
+      farSide: true,
       turn: turn.current ?? undefined,
       zoom: zoomRef.current,
       still: !gesture.current && !momentum.current && !anim.current,
@@ -774,7 +780,7 @@ export function useGlViewport(
   const hostProps = {
     ref: hostRef,
     "data-map-frame": true,
-    // 기울이면 먼 쪽 너머로 하늘이 보인다
+    // svg 지도(WebGL 없음)를 기울이면 먼 쪽 너머로 하늘이 보인다 - WebGL 판은 화면 끝까지 지도를 그린다
     style: { background: "linear-gradient(var(--map-sky), var(--map-ocean))" },
     className:
       "absolute inset-0 cursor-grab touch-none overflow-hidden select-none active:cursor-grabbing",

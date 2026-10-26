@@ -10,7 +10,9 @@ import {
 } from "react";
 import { geoGraticule10, geoPath } from "d3-geo";
 import {
+  MAP_BOTTOM,
   MAP_HEIGHT,
+  MAP_TOP,
   MAP_WIDTH,
   makeProjection,
   normalizeLon,
@@ -25,7 +27,7 @@ import world from "world-atlas/land-110m.json";
 
 /**
  * 평면 지도 뷰포트(도메인을 모르는 공용 부품). 전쟁 지도·주제 지도가 같이 쓴다.
- * - 메르카토르, 위도 82°N ~ 58°S, 가로 1000 단위 = 경도 360°
+ * - 메르카토르, 위도 85°N ~ 85°S(배율 기준 높이는 82°N ~ 58°S - projection.ts), 가로 1000 단위 = 경도 360°
  * - 가로 이동은 회전(끝없이 이어짐), 세로는 확대했을 때만
  * - 끌기, 휠(커서 고정), 두 번 클릭 확대, focusTo(좌표)로 부드럽게 이동
  * - 지도 위에 떠 있는 패널(`data-map-overlay`)에 가리지 않도록 가운데를 비켜 잡는다
@@ -33,6 +35,8 @@ import world from "world-atlas/land-110m.json";
 export {
   MAP_WIDTH,
   MAP_HEIGHT,
+  MAP_TOP,
+  MAP_BOTTOM,
   yOfLat,
   normalizeLon,
   makeProjection,
@@ -151,8 +155,8 @@ export function useMapViewport(initial: {
       return {
         x: (MAP_WIDTH - w) / 2,
         y: Math.min(
-          MAP_HEIGHT - h + cover.bottom * unit,
-          Math.max(-cover.top * unit, cy - h / 2),
+          MAP_BOTTOM - h + cover.bottom * unit,
+          Math.max(MAP_TOP - cover.top * unit, cy - h / 2),
         ),
         w,
         h,

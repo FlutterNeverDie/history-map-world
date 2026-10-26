@@ -36,7 +36,9 @@ import { cubicBezier } from "@/components/map/gl/ease";
 import { fill } from "@/i18n";
 import { useI18n } from "@/i18n/I18nProvider";
 import {
+  MAP_BOTTOM,
   MAP_HEIGHT,
+  MAP_TOP,
   MAP_WIDTH,
   graticule,
   land,
@@ -457,8 +459,8 @@ export function WorldMap() {
         size && frame ? (MAP_HEIGHT * size.h) / (k * frame.h) : MAP_HEIGHT / k;
       const w = size ? (h * size.w) / size.h : MAP_WIDTH / k;
       const unit = size ? h / size.h : 0;
-      const lo = -cover.top * unit;
-      const hi = MAP_HEIGHT - h + cover.bottom * unit;
+      const lo = MAP_TOP - cover.top * unit;
+      const hi = MAP_BOTTOM - h + cover.bottom * unit;
       // 판이 위도 전체보다 크면(돌린 판을 축소했을 때) 가운데에
       const y =
         hi < lo ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, cy - h / 2));
@@ -471,8 +473,8 @@ export function WorldMap() {
   if (held.top || held.bottom) {
     const unit = size ? v.h / size.h : 0;
     if (
-      v.y <= MAP_HEIGHT - v.h + actualCover.bottom * unit + 0.5 &&
-      v.y >= -actualCover.top * unit - 0.5
+      v.y <= MAP_BOTTOM - v.h + actualCover.bottom * unit + 0.5 &&
+      v.y >= MAP_TOP - actualCover.top * unit - 0.5
     )
       setHeld({ top: 0, bottom: 0 });
   }
@@ -2178,9 +2180,8 @@ export function WorldMap() {
         frame,
         heading: headingRef.current,
         tilt: tiltTransform(t, frame.h),
-        // 지금 판의 먼 쪽 흐림(mask)과 같은 높이 - 장면 모드는 자르지 않는다
-        fade: t && !isScene() ? ((4 + t / 4) / 100) * frame.h : 0,
-        clipToPlane: !!t && !isScene(),
+        // 기울이면 판 밖 먼 쪽도 화면 끝까지 지도로(장면 모드는 장면 층이 그린다)
+        farSide: !isScene(),
         turn: glTurn.current ?? undefined,
         zoom: zoomRef.current,
         // 그린 화면 그대로 멈춰 있음(손짓·관성 없음) - 글자를 화면 픽셀에 맞춘다
@@ -2280,9 +2281,9 @@ export function WorldMap() {
           >
             <rect
               x={rv(v.x)}
-              y={0}
+              y={MAP_TOP}
               width={rv(v.w)}
-              height={MAP_HEIGHT}
+              height={MAP_BOTTOM - MAP_TOP}
               fill="var(--map-ocean)"
             />
             <defs>

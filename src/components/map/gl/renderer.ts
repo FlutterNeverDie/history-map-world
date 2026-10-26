@@ -1,5 +1,6 @@
 import type { Ring, Shape } from "./polygons";
 import { cubicBezier } from "./ease";
+import { MAP_BOTTOM, MAP_TOP } from "../projection";
 
 /**
  * WebGL2 지도 판(도메인 모름): 지도 좌표(경도 0 메르카토르, 가로 width) 도형을 지금 SVG 지도와 같은 식으로 화면에 그린다.
@@ -7,6 +8,7 @@ import { cubicBezier } from "./ease";
  *   판 px → 지도 칸 px: 판을 가운데 맞춤으로 놓고 가운데를 축으로 -heading 회전
  *   → 기울이기: CSS와 같은 행렬(tilt, 원점 = 지도 칸 아래 가운데)을 그대로 곱해 원근
  * 선 굵기는 화면 px(기울이기 전 판 위에서 - 그래서 기울이면 CSS처럼 원근으로 줄어든다). 나라 색은 해안선 안쪽만(스텐실).
+ * 기울이면(farSide) 판 밖 먼 쪽도 화면 끝까지 그린다(drawRange). 지도 위 끝(85°N) 너머는 바다, 아래 끝(85°S) 너머는 땅 색(남극 얼음).
  * 그릴 일이 있을 때만 그린다(request).
  */
 export type GlView = {
@@ -21,9 +23,8 @@ export type GlView = {
   heading: number;
   /** 기울이기 행렬(CSS transform 문자열 - 원점은 지도 칸 아래 가운데), 없으면 "" */
   tilt: string;
-  /** 먼 쪽을 하늘로 흐리게 하는 높이(px, 판 위쪽에서부터 0이면 없음)·판 밖 자르기 */
-  fade: number;
-  clipToPlane: boolean;
+  /** 기울였을 때 판(보이는 범위) 밖 먼 쪽까지 화면 끝까지 이어 그린다 - 판 끝 너머가 비어 보이지 않게(영상 장면은 장면 층이 따로 그려 false) */
+  farSide: boolean;
   /** 나침반 되돌리기 애니메이션 중: 판 가운데를 축으로 더 돌릴 각도(도)와 옮길 양(px, 기울이기 전) */
   turn?: { rot: number; tx: number; ty: number };
   /** 지금 배율(확대하는 동안의 값까지) - 글자는 글자 판을 만든 배율 대비 배율^0.2로 자란다(svg 이름과 같은 규칙) */
@@ -127,15 +128,10 @@ in vec2 v_p;
 in vec4 v_col;
 uniform vec4 u_color;      // a < 0 이면 정점 색(a_col) 사용
 uniform float u_alpha;     // 정점 색일 때 진하기
-uniform float u_fade;
-uniform vec2 u_frame;
-uniform bool u_clip;
 out vec4 o;
 void main() {
-  if (u_clip && (v_p.x < 0.0 || v_p.y < 0.0 || v_p.x > u_frame.x || v_p.y > u_frame.y)) discard;
   vec4 c = u_color.a < 0.0 ? vec4(v_col.rgb, u_alpha * v_col.a) : u_color;
-  float f = u_fade > 0.0 ? clamp(v_p.y / u_fade, 0.0, 1.0) : 1.0;
-  float a = c.a * f;
+  float a = c.a;
   o = vec4(c.rgb * a, a);
 }`;
 const LINE_FS = `#version 300 es
@@ -145,16 +141,11 @@ in vec4 v_col;
 in float v_along;
 uniform vec4 u_color;      // a < 0 이면 선분 색(a_col)
 uniform vec2 u_dash;       // 점선: 칠한 길이·빈 길이(px), 0이면 실선
-uniform float u_fade;
-uniform vec2 u_frame;
-uniform bool u_clip;
 out vec4 o;
 void main() {
-  if (u_clip && (v_p.x < 0.0 || v_p.y < 0.0 || v_p.x > u_frame.x || v_p.y > u_frame.y)) discard;
   if (u_dash.x > 0.0 && mod(v_along, u_dash.x + u_dash.y) > u_dash.x) discard;
   vec4 c = u_color.a < 0.0 ? v_col : u_color;
-  float f = u_fade > 0.0 ? clamp(v_p.y / u_fade, 0.0, 1.0) : 1.0;
-  float a = c.a * f;
+  float a = c.a;
   o = vec4(c.rgb * a, a);
 }`;
 
@@ -189,14 +180,9 @@ precision highp float;
 in vec2 v_p;
 in vec2 v_uv;
 uniform sampler2D u_tex;
-uniform float u_fade;
-uniform vec2 u_frame;
-uniform bool u_clip;
 out vec4 o;
 void main() {
-  if (u_clip && (v_p.x < 0.0 || v_p.y < 0.0 || v_p.x > u_frame.x || v_p.y > u_frame.y)) discard;
-  float f = u_fade > 0.0 ? clamp(v_p.y / u_fade, 0.0, 1.0) : 1.0;
-  o = texture(u_tex, v_uv) * f;
+  o = texture(u_tex, v_uv);
 }`;
 /** 핀(지금 svg 핀과 같은 원들): 바깥 흰 원 r6(고르면 7.5), 안쪽 지역 색 r4(5) + 테두리 1(1.5), 고른 핀은 물결 원(r7.5, 2) */
 const PIN_VS = `#version 300 es
@@ -233,15 +219,11 @@ uniform vec4 u_ring;
 uniform float u_unit;
 uniform float u_pulse;
 uniform float u_pulseAlpha;
-uniform float u_fade;
-uniform vec2 u_frame;
-uniform bool u_clip;
 out vec4 o;
 // 원 안쪽 덮임(가장자리 1px 부드럽게)
 float disk(float d, float r) { return clamp((r - d) * u_unit + 0.5, 0.0, 1.0); }
 vec4 over(vec4 top, vec4 under) { return top + under * (1.0 - top.a); }
 void main() {
-  if (u_clip && (v_p.x < 0.0 || v_p.y < 0.0 || v_p.x > u_frame.x || v_p.y > u_frame.y)) discard;
   float d = length(v_q);
   bool sel = v_sel > 0.5;
   float ro = sel ? 7.5 : 6.0;
@@ -259,8 +241,7 @@ void main() {
   c = over(vec4(v_color, 1.0) * disk(d, ri), c);
   float edge = disk(d, ri + sw * 0.5) - disk(d, ri - sw * 0.5);
   c = over(u_ring * edge, c);
-  float f = u_fade > 0.0 ? clamp(v_p.y / u_fade, 0.0, 1.0) : 1.0;
-  o = c * f;
+  o = c;
 }`;
 
 /** 지도 칸 px(기울이기 전) → clip: 기울이기(CSS 행렬, 원점 지도 칸 아래 가운데) 다음 clip 좌표로 */
@@ -283,6 +264,75 @@ export function frameMatrix(view: GlView): Float32Array {
   mat[10] = mat[11];
   mat[14] = mat[15] - 2 * near;
   return mat;
+}
+/**
+ * 그릴 범위(지도 좌표, view.v와 같은 기준): 보통은 보이는 범위 view.v, 기울였으면(farSide) 화면 네 모서리를 판 위로 펴서
+ * 먼 쪽까지 - 판 밖도 화면 끝까지 지도가 이어진다. 기울기 55°까지는 지평선이 화면 위에 있어 모서리가 늘 판 앞쪽에 떨어진다
+ * (눈 거리 = 지도 칸 높이 2배, tilt.ts). 그래도 혹시 지평선 너머면 보이는 범위의 몇 배로 끊는다.
+ */
+export function drawRange(view: GlView) {
+  const { v, size, frame } = view;
+  const r = { x0: v.x, x1: v.x + v.w, y0: v.y, y1: v.y + v.h };
+  if (!view.farSide || !view.tilt) return r;
+  const { w: fw, h: fh } = frame;
+  const m = new DOMMatrix()
+    .translate(fw / 2, fh)
+    .multiply(new DOMMatrix(view.tilt))
+    .translate(-fw / 2, -fh);
+  // 판(z = 0) → 화면은 3×3 사영 변환 - 거꾸로 풀어 화면 점을 판 위 점(지도 칸 px, 기울이기 전)으로
+  const [a, b, c, d, e, f, g, h, i] = [
+    m.m11,
+    m.m21,
+    m.m41,
+    m.m12,
+    m.m22,
+    m.m42,
+    m.m14,
+    m.m24,
+    m.m44,
+  ];
+  const A = e * i - f * h,
+    B = c * h - b * i,
+    C = b * f - c * e;
+  const D = f * g - d * i,
+    E = a * i - c * g,
+    F = c * d - a * f;
+  const G = d * h - e * g,
+    H = b * g - a * h,
+    I = a * e - b * d;
+  const rad = ((-view.heading + (view.turn?.rot ?? 0)) * Math.PI) / 180;
+  const cos = Math.cos(rad),
+    sin = Math.sin(rad);
+  const tx = view.turn?.tx ?? 0,
+    ty = view.turn?.ty ?? 0;
+  const limit = 6 * Math.max(v.w, v.h);
+  for (const [sx, sy] of [
+    [0, 0],
+    [fw, 0],
+    [0, fh],
+    [fw, fh],
+  ]) {
+    const w = G * sx + H * sy + I;
+    if (w <= 1e-9) continue;
+    // 지도 칸 px → 회전·옮김을 되돌려 판 px → 지도 좌표(TO_FRAME의 거꾸로)
+    const qx = (A * sx + B * sy + C) / w - fw / 2 - tx;
+    const qy = (D * sx + E * sy + F) / w - fh / 2 - ty;
+    const px = fw / 2 + qx * cos + qy * sin - (fw - size.w) / 2;
+    const py = fh / 2 - qx * sin + qy * cos - (fh - size.h) / 2;
+    const mx = Math.min(
+      v.x + v.w + limit,
+      Math.max(v.x - limit, v.x + (px * v.w) / size.w),
+    );
+    const my = Math.min(
+      v.y + v.h + limit,
+      Math.max(v.y - limit, v.y + (py * v.h) / size.h),
+    );
+    r.x0 = Math.min(r.x0, mx);
+    r.x1 = Math.max(r.x1, mx);
+    r.y0 = Math.min(r.y0, my);
+    r.y1 = Math.max(r.y1, my);
+  }
+  return r;
 }
 /** TO_FRAME이 쓰는 값(u_view·u_plane·u_frame·u_rot·u_tr·u_m)을 지금 프로그램에 */
 export function setFrameUniforms(
@@ -794,8 +844,6 @@ export class MapRenderer {
     const common = (prog: ReturnType<typeof compile>) => {
       gl.useProgram(prog.p);
       setFrameUniforms(gl, prog.u, view);
-      gl.uniform1f(prog.u("u_fade"), view.fade);
-      gl.uniform1i(prog.u("u_clip"), view.clipToPlane ? 1 : 0);
     };
     const color = (
       prog: ReturnType<typeof compile>,
@@ -805,39 +853,48 @@ export class MapRenderer {
       gl.uniform4f(prog.u("u_color"), c[0], c[1], c[2], (c[3] ?? 1) * alpha);
     };
 
-    // 바다: 보이는 범위 가로 전체, 세로는 지도 위아래 끝까지(그 밖은 지도 칸 바탕 = 하늘)
+    // 바다: 그릴 범위 가로 전체, 세로는 지도 위 끝(85°N) 너머까지. 아래 끝(85°S) 너머는 땅 색(남극 얼음이 이어지게)
+    const range = drawRange(view);
     common(this.fill);
     gl.uniform1f(this.fill.u("u_off"), 0);
-    color(this.fill, theme.ocean);
     gl.bindVertexArray(this.oceanVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.ocean);
-    const mh = this.mapHeight;
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([
-        view.v.x,
-        0,
-        view.v.x + view.v.w,
-        0,
-        view.v.x,
-        mh,
-        view.v.x + view.v.w,
-        mh,
-      ]),
-      gl.DYNAMIC_DRAW,
-    );
     const aPos = gl.getAttribLocation(this.fill.p, "a_pos");
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     gl.disableVertexAttribArray(gl.getAttribLocation(this.fill.p, "a_col"));
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    const band = (y0: number, y1: number, c: number[]) => {
+      if (y1 <= y0) return;
+      color(this.fill, c);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([
+          range.x0,
+          y0,
+          range.x1,
+          y0,
+          range.x0,
+          y1,
+          range.x1,
+          y1,
+        ]),
+        gl.DYNAMIC_DRAW,
+      );
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    };
+    band(Math.min(range.y0, MAP_TOP), MAP_BOTTOM, theme.ocean);
+    band(MAP_BOTTOM, range.y1, theme.land);
 
-    // 복사본(경도 한 바퀴씩): 보이는 범위에 걸치는 것만
-    const offs: number[] = [];
-    for (let k = -2; k <= 2; k++) {
-      const o = view.shift + k * this.mapWidth;
-      if (o < view.v.x + view.v.w && o + this.mapWidth > view.v.x) offs.push(o);
-    }
+    // 복사본(경도 한 바퀴씩): 그릴 범위에 걸치는 것만(기울이면 먼 쪽이 넓어 여러 바퀴)
+    const copiesIn = (x0: number, x1: number) => {
+      const out: number[] = [];
+      const k0 = Math.floor((x0 - view.shift) / this.mapWidth);
+      const k1 = Math.floor((x1 - view.shift) / this.mapWidth);
+      for (let k = Math.max(k0, -12); k <= Math.min(k1, 12); k++)
+        out.push(view.shift + k * this.mapWidth);
+      return out;
+    };
+    const offs = copiesIn(range.x0, range.x1);
     const lines = (
       l: Lines | null,
       width: number,
@@ -916,15 +973,8 @@ export class MapRenderer {
     }
 
     // 핀·나라 이름·말풍선(지금 핀·이름 svg와 같은 층 순서). 화면 밖 핀도 끄는 동안 보이게 복사본은 넓게
-    const overlayOffs: number[] = [];
-    for (let k = -2; k <= 2; k++) {
-      const o = view.shift + k * this.mapWidth;
-      if (
-        o < view.v.x + view.v.w * 1.5 &&
-        o + this.mapWidth > view.v.x - view.v.w * 0.5
-      )
-        overlayOffs.push(o);
-    }
+    const rw = range.x1 - range.x0;
+    const overlayOffs = copiesIn(range.x0 - rw * 0.5, range.x1 + rw * 0.5);
     // 물결: 1.6초 ease-out × 3번(globals.css pin-pulse와 같게), 움직임 줄이기면 없음
     const since = (performance.now() - this.pulseFrom) / 1600;
     const pulsing = !this.reduceMotion && this.pulseFrom > 0 && since < 3;

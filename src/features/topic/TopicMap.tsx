@@ -116,9 +116,9 @@ function TopicMapSvg() {
     >
       <rect
         x={vp.v.x}
-        y={0}
+        y={-500}
         width={vp.v.w}
-        height={2000}
+        height={3000}
         fill="var(--map-ocean)"
       />
       {vp.copies.map((offset, copy) => (
